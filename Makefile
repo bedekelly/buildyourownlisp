@@ -1,6 +1,9 @@
 main: main.c
 	gcc mpc.c main.c -o main -std=c11 -ledit -Wall -Werror -lm
 
+decimals: decimals.c
+	gcc mpc.c decimals.c -o decimals -std=c11 -ledit -Wall -Werror -lm
+
 his: his.c
 	gcc mpc.c his.c -o his -std=c99 -ledit -Werror -Wall -lm
 

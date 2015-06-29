@@ -3,7 +3,8 @@
 #include <math.h>
 #include "mpc.h"
 #include "inspection.h"
-#include "lval.h"
+#include "lval_dec.h"
+#include "lvalmath_dec.c"
 
 #ifdef _WIN32
 
@@ -38,7 +39,8 @@ void del_lval(lval *v)
 {
   switch (v->type)
     {
-    case LVAL_NUM:
+    case LVAL_DBL:
+    case LVAL_INT:
       break;
     case LVAL_ERR:
       free(v->error_msg);
@@ -62,11 +64,20 @@ void del_lval(lval *v)
 
 
 /* Define constructor functions for lvalue numbers and errors. */
-lval *new_lval_num(long x)
+lval *new_lval_int(long x)
 {
   lval *v = malloc(sizeof(lval));
-  v->type = LVAL_NUM;
-  v->num = x;
+  v->type = LVAL_INT;
+  v->lnum = x;
+  return v;
+}
+
+
+lval *new_lval_dbl(double x)
+{
+  lval *v = malloc(sizeof(lval));
+  v->type = LVAL_DBL;
+  v->dnum = x;
   return v;
 }
 
@@ -96,9 +107,11 @@ void _lval_print(lval *v)
 {
   switch(v->type)
     {
-    case LVAL_NUM:
-      printf("%ld", v->num);
+    case LVAL_INT:
+      printf("%ld", v->lnum);
       break;
+    case LVAL_DBL:
+      printf("%f", v->dnum);
     case LVAL_ERR:
       printf("%s\n", v->error_msg);
       break;
@@ -116,39 +129,33 @@ void lval_print(lval *v)
 }
 
 
-lval *eval_op(char *op, lval *left, lval *right)
+lval *eval_op(char *sym, lval *left, lval *right)
 {
   if (left->type == LVAL_ERR)
     return left;
   if (right->type == LVAL_ERR)
     return right;
 
-  long x = left->num;
-  long y = right->num;
-  switch(*op){
+  switch(*sym){
   case '+': 
-    return new_lval_num(x + y);
+    return add_lvals(left, right);
   case '-':
-    return new_lval_num(x - y);
+    return subtract_lvals(left, right);
   case '*':
-    return new_lval_num(x * y);
+    return multiply_lvals(left, right);
   case '/':
-    {
-      if (y == 0)
-	return new_lval_err("Division by zero!");
-      return new_lval_num(x / y);
-    }
+    return divide_lvals(left, right);
   case '%':
-    return new_lval_num(x % y);
+    return modulo_lvals(left, right);
   case '^':
-    return new_lval_num(pow(x, y));
+    return pow_lvals(left, right);
   }
   
-  if (!strcmp(op, "max"))
-    return new_lval_num((x > y) ? x : y);
+  if (!strcmp(sym, "max"))
+    return max_lvals(left, right);
 
-  if (!strcmp(op, "min"))
-    return new_lval_num((x < y) ? x : y);
+  if (!strcmp(sym, "min"))
+    return min_lvals(left, right);
 
   return new_lval_err("Bad operator!");
 }
@@ -159,7 +166,7 @@ lval *eval_exp(mpc_ast_t *tree)
 {
   // Base case: expression is a number so eval and return.
   if (strstr(tree->tag, "num"))
-    return new_lval_num(atoi(tree->contents));
+    return new_lval_int(atoi(tree->contents));
 
   // Tolerate a bracketless expression in the outermost nesting.
   if (strcmp(tree->tag, ">") == 0 && tree->children_num == 1) 
