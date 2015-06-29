@@ -1,5 +1,5 @@
 main: main.c
-	gcc mpc.c main.c -o main -std=c11 -ledit -Wall -lm
+	gcc mpc.c main.c -o main -std=c11 -ledit -Wall -Werror -lm
 
 his: his.c
 	gcc mpc.c his.c -o his -std=c99 -ledit -Werror -Wall -lm
