@@ -15,6 +15,7 @@ char *readline(const char *prompt)
   fgets(prompt, stdout);
   fgets(buf, sizeof(buffer), stdin);
 
+  // Use strlen here to truncate the buffer.
   size_t bufsize = strlen(buffer);
   char *cpy = malloc(bufsize);
   memcpy(cpy, buffer, bufsize);
@@ -35,86 +36,125 @@ void add_history(char *unused){}
 /* Enumerate the possible lvalue types. */
 enum LVAL_TYPE
   {
+    LVAL_SYM,
+    LVAL_SEXPR,
     LVAL_NUM,
     LVAL_ERR,
   };
 
-/* Enumerate possible lvalue errors. */
-enum LVAL_ERR
-  { 
-    LERR_ZERO_DIVISION,
-    LERR_BAD_OPERATOR,
-    LERR_BAD_NUMBER,
-  };
 
 
 /* Declare a Lisp Value type. */
+struct sexpr_t;
 typedef struct
 {
   enum LVAL_TYPE type;
   union {
-    enum LVAL_ERR err;
+    char *error_msg;
+    char *symbol;
     long num;
+    struct sexpr_t *sexpr;
   };
 } lval;
 
-  
+
+typedef struct sexpr_t {
+  int count;
+  lval **cell;
+} sexpr_t;
+
+
+void del_lval(lval *v)
+{
+  switch (v->type)
+    {
+    case LVAL_NUM:
+      break;
+    case LVAL_ERR:
+      free(v->error_msg);
+      break;
+    case LVAL_SYM:
+      free(v->symbol);
+      break;
+    case LVAL_SEXPR:
+      for (int i=0; i < v->sexpr->count; i++)
+	{
+	  del_lval(v->sexpr->cell[i]);
+	}
+      free(v->sexpr->cell);
+      free(v->sexpr);
+      free(v);
+      break;
+    default:
+      break;
+    }
+}
+
 
 /* Define constructor functions for lvalue numbers and errors. */
-lval new_lval_num(long x)
+lval *new_lval_num(long x)
 {
-  lval v = {.type=LVAL_NUM, .num=x};
+  lval *v = malloc(sizeof(lval));
+  v->type = LVAL_NUM;
+  v->num = x;
   return v;
 }
 
 
-lval new_lval_err(enum LVAL_ERR x)
+lval *new_lval_sym(char *sym)
 {
-  lval v = {.type=LVAL_ERR, .err=x};
+  lval *v = malloc(sizeof(lval));
+  v->type = LVAL_SYM;
+  v->symbol = malloc(strlen(sym) + 1);
+  strcpy(v->symbol, sym);
+  return v;
+}
+
+
+lval *new_lval_err(char *msg)
+{
+  lval *v = malloc(sizeof(lval));
+  v->type = LVAL_ERR;
+  v->error_msg = malloc(strlen(msg) + 1);
+  strcpy(v->error_msg, msg);
   return v;
 }
 
 
 /* Define a generic function to print an lvalue. */
-void _lval_print(lval v)
+void _lval_print(lval *v)
 {
-  switch(v.type)
+  switch(v->type)
     {
     case LVAL_NUM:
-      printf("%ld", v.num);
+      printf("%ld", v->num);
       break;
     case LVAL_ERR:
-      switch(v.err)
-	{
-	case LERR_ZERO_DIVISION:
-	  printf("Division by Zero!"); break;
-	case LERR_BAD_OPERATOR:
-	  printf("Operator not recognised!"); break;
-	case LERR_BAD_NUMBER:
-	  printf("Invalid syntax!"); break;
-	default:
-	  break;
-	}
+      printf("%s\n", v->error_msg);
+      break;
+    default:
+      break;
     }
 }
 
+
 /* Wrapper function: uses the above, then prints a newline. */
-void lval_print(lval v)
+void lval_print(lval *v)
 { 
   _lval_print(v);
   putchar('\n');
 }
 
 
-lval eval_op(char *op, lval left, lval right)
+lval *eval_op(char *op, lval *left, lval *right)
 {
-  if (left.type == LVAL_ERR)
+  if (left->type == LVAL_ERR)
     return left;
-  if (right.type == LVAL_ERR)
+  if (right->type == LVAL_ERR)
     return right;
 
-  int x = left.num;
-  int y = right.num;
+  int x = left->num;
+  int y = right->num;
   switch(*op){
   case '+': 
     return new_lval_num(x + y);
@@ -125,7 +165,7 @@ lval eval_op(char *op, lval left, lval right)
   case '/':
     {
       if (y == 0)
-	return new_lval_err(LERR_ZERO_DIVISION);
+	return new_lval_err("Division by zero!");
       return new_lval_num(x / y);
     }
   case '%':
@@ -140,11 +180,12 @@ lval eval_op(char *op, lval left, lval right)
   if (!strcmp(op, "min"))
     return new_lval_num((x < y) ? x : y);
 
-  return new_lval_err(LERR_BAD_OPERATOR);
+  return new_lval_err("Bad operator!");
 }
 
+
 /* Evaluate the expression from an abstract syntax tree. */
-lval eval_exp(mpc_ast_t *tree)
+lval *eval_exp(mpc_ast_t *tree)
 {
   // Base case: expression is a number so eval and return.
   if (strstr(tree->tag, "num"))
@@ -165,7 +206,7 @@ lval eval_exp(mpc_ast_t *tree)
   
   // Eval the first operand.
   i++;
-  lval result = eval_exp(tree->children[i]);
+  lval *result = eval_exp(tree->children[i]);
 
   // Move to the next operand and combine using operator.
   i++;
@@ -183,7 +224,8 @@ int main(int argc, char *argv[])
 {
   /* Create some parsers for mathematical expressions using RPN. */
   mpc_parser_t *Number = mpc_new("number");
-  mpc_parser_t *Operator = mpc_new("operator");
+  mpc_parser_t *Symbol = mpc_new("symbol");
+  mpc_parser_t *Sexpr = mpc_new("sexpr");
   mpc_parser_t *Expr = mpc_new("expr");
   mpc_parser_t *Line = mpc_new("line");
 
@@ -191,12 +233,13 @@ int main(int argc, char *argv[])
   mpca_lang(MPCA_LANG_DEFAULT,
 	    "                                                    \
               number : /-?[0-9]+/ ;                              \
-              operator : '-' | '+' | '*' | '/' | '%' | '^'       \
+              symbol : '-' | '+' | '*' | '/' | '%' | '^'         \
                              | \"min\" | \"max\" ;		 \
-              expr : <number> | ('(' <operator> <expr>+ ')') ;   \
-              line : (<expr> | (<operator> <expr>+)) ;           \
+              sexpr : '(' <expr>* ')' ;                          \
+              expr : <number> | <symbol> | <sexpr> ;             \
+              line : <expr>* ;                                   \
             ",
-	    Number, Operator, Expr, Line);
+	    Number, Symbol, Sexpr, Expr, Line);
 
   puts("Lispy Version 0.0.1");
   puts("Press C-d to exit\n");
@@ -227,5 +270,5 @@ int main(int argc, char *argv[])
 
       free(input);
     }
-  mpc_cleanup(4, Number, Operator, Expr, Line);
+  mpc_cleanup(5, Number, Symbol, Sexpr, Expr, Line);
 }
